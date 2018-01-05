@@ -18,6 +18,7 @@
         ], factory);
 }(this, function (utils, converse, muc, tpl_rooms_list, tpl_rooms_list_item) {
     const { Backbone, Promise, b64_sha1, sizzle, _ } = converse.env;
+    const u = converse.env.utils;
 
     converse.plugins.add('converse-roomslist', {
 
@@ -48,7 +49,37 @@
                 }
             });
 
-            _converse.RoomsListView = Backbone.NativeView.extend({
+            _converse.RoomsListElementView = Backbone.VDOMView.extend({
+                initialize () {
+                    this.model.on('destroy', this.remove.bind(this));
+                    this.model.on('change:bookmarked', this.render, this);
+                    this.model.on('change:name', this.render, this);
+                    this.model.on('change:num_unread', this.render, this);
+                    this.model.on('change:num_unread_general', this.render, this);
+                },
+
+                toHTML () {
+                    let name;
+                    if (this.model.get('bookmarked')) {
+                        const bookmark = _.head(_converse.bookmarksview.model.where({'jid': this.model.get('jid')}));
+                        name = bookmark.get('name');
+                    } else {
+                        name = this.model.get('name');
+                    }
+                    return tpl_rooms_list_item(
+                        _.extend(this.model.toJSON(), {
+                            'allow_bookmarks': _converse.allow_bookmarks,
+                            'info_leave_room': __('Leave this room'),
+                            'info_remove_bookmark': __('Unbookmark this room'),
+                            'info_add_bookmark': __('Bookmark this room'),
+                            'info_title': __('Show more information on this room'),
+                            'name': name,
+                            'open_title': __('Click to open this room')
+                        }));
+                }
+            });
+
+            _converse.RoomsListView = Backbone.OrderedListView.extend({
                 tagName: 'div',
                 className: 'open-rooms-list rooms-list-container',
                 events: {
@@ -57,16 +88,21 @@
                     'click .open-rooms-toggle': 'toggleRoomsList',
                     'click .remove-bookmark': 'removeBookmark',
                 },
+                listSelector: '.rooms-list',
+                ItemView: _converse.RoomsListElementView,
+                itemType: 'chatroom',
+                subviewIndex: 'jid',
 
                 initialize () {
-                    this.toggleRoomsList = _.debounce(this.toggleRoomsList, 600, {'leading': true});
+                    Backbone.OrderedListView.prototype.initialize.apply(this, arguments);
 
-                    this.model.on('add', this.renderRoomsListElement, this);
-                    this.model.on('change:bookmarked', this.renderRoomsListElement, this);
-                    this.model.on('change:name', this.renderRoomsListElement, this);
-                    this.model.on('change:num_unread', this.renderRoomsListElement, this);
-                    this.model.on('change:num_unread_general', this.renderRoomsListElement, this);
-                    this.model.on('remove', this.removeRoomsListElement, this);
+                    this.toggleRoomsList = _.debounce(this.toggleRoomsList, 600, {'leading': true});
+                    // this.model.on('add', this.renderRoomsListElement, this);
+                    // this.model.on('change:bookmarked', this.renderRoomsListElement, this);
+                    // this.model.on('change:name', this.renderRoomsListElement, this);
+                    // this.model.on('change:num_unread', this.renderRoomsListElement, this);
+                    // this.model.on('change:num_unread_general', this.renderRoomsListElement, this);
+                    this.model.on('remove', this.hideListIfEmpty, this);
 
                     const cachekey = `converse.roomslist${_converse.bare_jid}`;
                     this.list_model = new _converse.RoomsList();
@@ -76,6 +112,7 @@
                     );
                     this.list_model.fetch();
                     this.render();
+                    this.sortAndPositionAllItems();
                 },
 
                 render () {
@@ -85,13 +122,17 @@
                         'desc_rooms': __('Click to toggle the rooms list'),
                         'label_rooms': __('Open Rooms')
                     });
-                    this.hide();
                     if (this.list_model.get('toggle-state') !== _converse.OPENED) {
                         this.el.querySelector('.open-rooms-list').classList.add('collapsed');
                     }
-                    this.model.each(this.renderRoomsListElement.bind(this));
-                    const controlboxview = _converse.chatboxviews.get('controlbox');
+                    // this.model.each(this.renderRoomsListElement.bind(this));
+                    this.hideListIfEmpty();
+                    this.insertIntoControlBox();
+                    return this;
+                },
 
+                insertIntoControlBox () {
+                    const controlboxview = _converse.chatboxviews.get('controlbox');
                     if (!_.isUndefined(controlboxview) &&
                             !document.body.contains(this.el)) {
                         const container = controlboxview.el.querySelector('#chatrooms');
@@ -99,7 +140,6 @@
                             container.insertBefore(this.el, container.firstChild);
                         }
                     }
-                    return this.el;
                 },
 
                 hide () {
@@ -144,6 +184,12 @@
                     }));
                     this.el.querySelector('.open-rooms-list').appendChild(div.firstChild);
                     this.show();
+                },
+
+                hideListIfEmpty (item) {
+                    if (!this.model.models.length) {
+                        u.hideElement(this.el);
+                    }
                 },
 
                 removeBookmark: _converse.removeBookmarkViaEvent,
